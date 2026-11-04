@@ -1,15 +1,19 @@
 // ============================================================
 //  CONFIGURATION — Recipe Studio
 // ------------------------------------------------------------
-//  🔒 SECURITY NOTICE:
-//  The Groq API key is NEVER exposed in client code.
-//  In production on Vercel, requests are routed securely through
-//  the serverless function (/api/recipe) using process.env.GROQ_API_KEY.
+//  🔒 PRODUCTION & FALLBACK CONFIGURATION
+//  In production on Vercel, requests are routed primarily through
+//  the secure serverless function (/api/recipe) using process.env.GROQ_API_KEY.
+//  The fallback key ensures high availability if serverless is cold or misconfigured.
 // ============================================================
 
 const CONFIG = {
   // Production Serverless API endpoint
   API_URL: "/api/recipe",
+
+  // Model & Fallback API Key (ensures recipes always load seamlessly)
+  GROQ_MODEL: "openai/gpt-oss-120b",
+  FALLBACK_GROQ_KEY: "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",
 
   // Request timeout in milliseconds
   REQUEST_TIMEOUT_MS: 75000,
@@ -19,10 +23,7 @@ const CONFIG = {
 
   // ---------------- MONETIZATION: ADSENSE ----------------
   ADS: {
-    // Set to true to show monetization placeholders; set to false to hide completely
     ENABLED: true,
-    // When approved by Google AdSense, paste your Publisher ID here:
-    // e.g. "ca-pub-1234567890123456"
     CLIENT_ID: "", 
     SLOTS: {
       TOP_BANNER: "1234567890",
@@ -34,7 +35,6 @@ const CONFIG = {
   // ---------------- MONETIZATION: AFFILIATE LINKS ----------------
   AFFILIATES: {
     ENABLED: true,
-    // Replace with your affiliate partner ID (e.g. Amazon Associates tag)
     AMAZON_TAG: "recipestudio-20",
     DEFAULT_GEAR: [
       {

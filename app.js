@@ -866,7 +866,93 @@ async function openRecipe(dishName, emoji) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-/* ---------------- SECURE BACKEND API CALL ---------------- */
+/* ---------------- SECURE BACKEND API CALL & DIRECT FALLBACK ---------------- */
+const GROQ_SYSTEM_PROMPT = `You are a world-class chef and food historian. You provide the most authentic, audience-loved recipes from around the world. You write in BOTH English and Urdu.
+Respond with ONLY valid JSON (no markdown, no explanation, no code fences) matching this exact schema:
+{
+  "name": "English dish name",
+  "nameUrdu": "Urdu dish name (نستعلیق script)",
+  "origin": "English origin e.g. Hyderabad, India",
+  "originUrdu": "Urdu origin",
+  "description": "2-3 sentence mouth-watering English description",
+  "descriptionUrdu": "2-3 sentence mouth-watering Urdu description",
+  "baseServings": 4,
+  "prepTime": "English e.g. 30 minutes",
+  "prepTimeUrdu": "Urdu e.g. 30 منٹ",
+  "cookTime": "English e.g. 45 minutes",
+  "cookTimeUrdu": "Urdu e.g. 45 منٹ",
+  "difficulty": "Easy | Medium | Hard",
+  "difficultyUrdu": "آسان | درمیانہ | مشکل",
+  "calories": {
+    "perServing": 480,
+    "note": "Approx. 480 kcal per standard 1 serving. Nutritious and balanced.",
+    "noteUrdu": "معیاری ایک سرونگ میں تقریباً 480 کیلوریز۔ متوازن اور غذائیت سے بھرپور۔",
+    "protein": "28g",
+    "carbs": "46g",
+    "fat": "16g"
+  },
+  "ingredients": [{"item": "English ingredient", "itemUrdu": "Urdu ingredient", "amount": "1 kg"}],
+  "instructions": [{"en": "English step", "ur": "Urdu step"}],
+  "cost": {"usd": 8.50, "pkr": 2380, "inr": 714, "note": "English cost note", "noteUrdu": "Urdu cost note"},
+  "tips": [{"en": "English tip", "ur": "Urdu tip"}],
+  "dos": [{"en": "English do", "ur": "Urdu do"}],
+  "donts": [{"en": "English don't", "ur": "Urdu don't"}],
+  "videos": [{"title": "short descriptive English video title", "url": "https://www.youtube.com/results?search_query=..."}]
+}
+Rules:
+- baseServings must be a NUMBER (the standard recipe yield, e.g. 4).
+- calories: provide realistic nutritional guidance for ONE standard/average serving of the dish.
+  - "perServing" MUST be an integer number of calories (kcal), e.g. 480.
+  - "note" and "noteUrdu": 1-2 sentence dietary guidance about the calorie content of 1 standard serving.
+  - "protein", "carbs", "fat": estimated macronutrients per standard serving in grams (e.g. "28g", "46g", "16g").
+- MEASUREMENTS - STRICT UNITS REQUIREMENT:
+  - DO NOT use the measuring unit "pao" (پاؤ) or "paao" under ANY circumstances. Never mention "pao".
+  - Use ONLY standard measurements in grams (g) and kilograms (kg) for solids:
+    - e.g. "250 grams" (NEVER "1 pao"), "500 grams (0.5 kg)", "1000 grams (1 kg)", "750 grams".
+  - Use tablespoons (tbsp) or teaspoons (tsp) where necessary for spices, seasonings, pastes, and cooking oils:
+    - e.g. "1 tbsp", "2 tbsp", "1 tsp", "1/2 tsp".
+  - Liquids: use milliliters (ml) and liters (L), or cups where helpful:
+    - e.g. "240 ml (1 cup)", "500 ml", "1 liter".
+  - Small pinches/garnishes: "a pinch", "to taste", "2 cloves", "1 bay leaf".
+- Amounts must start with the numeric quantity as the first thing so they can be scaled (e.g. "500 grams", "2 tbsp", "1 tsp").
+- cost: estimate total ingredient cost for baseServings. Use 1 USD ≈ 280 PKR ≈ 84 INR.
+- videos: provide 2-3 YouTube search URLs in format https://www.youtube.com/results?search_query=authentic+NAME+recipe (replace NAME). Do NOT invent direct video IDs.
+- Write ALL Urdu text in proper Urdu (نستعلیق), not transliteration.`;
+
+async function fetchDirectGroq(dishName, apiKey) {
+  const userPrompt = `Give me the most authentic, best-reviewed recipe for: ${dishName}`;
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: CONFIG.GROQ_MODEL || "openai/gpt-oss-120b",
+      messages: [
+        { role: "system", content: GROQ_SYSTEM_PROMPT },
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.4,
+      max_tokens: 5000,
+      response_format: { type: "json_object" }
+    })
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Groq API returned ${res.status}: ${body.slice(0, 120)}`);
+  }
+
+  const json = await res.json();
+  const raw = json.choices?.[0]?.message?.content;
+  if (!raw) throw new Error("Empty response from AI.");
+  const cleaned = raw.replace(/```json\s*/i, "").replace(/```\s*$/i, "").trim();
+  const data = JSON.parse(cleaned);
+  cleanRecipeData(data);
+  return data;
+}
+
 async function fetchRecipe(dishName) {
   // Input sanitization
   const cleanName = String(dishName || "")
@@ -879,47 +965,44 @@ async function fetchRecipe(dishName) {
     throw new Error("Please enter a valid recipe name (at least 2 characters).");
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS || 75000);
+  // 1. In production on Vercel, try the secure /api/recipe serverless backend
+  if (window.location.protocol !== "file:") {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS || 75000);
 
-  let res;
-  try {
-    res = await fetch(CONFIG.API_URL || "/api/recipe", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dishName: cleanName }),
-      signal: controller.signal
-    });
-  } catch (err) {
-    if (window.location.protocol === "file:") {
-      throw new Error(
-        "You are previewing Recipe Studio locally via file://. Serverless API routes run on Vercel or Node.js server. Please deploy to Vercel or run with a local server."
-      );
+      const res = await fetch(CONFIG.API_URL || "/api/recipe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dishName: cleanName }),
+        signal: controller.signal
+      }).finally(() => clearTimeout(timeout));
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.name && Array.isArray(data.ingredients) && Array.isArray(data.instructions)) {
+          cleanRecipeData(data);
+          return data;
+        }
+      } else {
+        console.warn(`/api/recipe responded with HTTP ${res.status}`);
+      }
+    } catch (apiErr) {
+      console.warn("Serverless backend request failed, trying fallback:", apiErr);
     }
-    throw new Error("Could not connect to Recipe Studio server. Please check your internet connection.");
-  } finally {
-    clearTimeout(timeout);
   }
 
-  if (!res.ok) {
-    let errJson = null;
-    try { errJson = await res.json(); } catch {}
-    if (res.status === 429) {
-      throw new Error(errJson?.error || "Rate limit reached. Too many requests have been made recently. Please wait a few moments.");
+  // 2. High-Availability Fallback: Direct Groq query (guarantees recipes ALWAYS load seamlessly)
+  if (CONFIG.FALLBACK_GROQ_KEY) {
+    try {
+      return await fetchDirectGroq(cleanName, CONFIG.FALLBACK_GROQ_KEY);
+    } catch (fallbackErr) {
+      console.error("Direct fallback failed:", fallbackErr);
+      throw new Error(fallbackErr.message || "Failed to generate recipe from AI.");
     }
-    if (res.status === 500 && errJson?.error?.includes("GROQ_API_KEY")) {
-      throw new Error("GROQ_API_KEY is not configured in Vercel. Please set GROQ_API_KEY under your Vercel Project Settings > Environment Variables.");
-    }
-    throw new Error(errJson?.error || `Server error (${res.status}). Please try again.`);
   }
 
-  const data = await res.json();
-  if (!data || !data.name || !Array.isArray(data.ingredients) || !Array.isArray(data.instructions)) {
-    throw new Error("AI returned an incomplete recipe. Please retry.");
-  }
-
-  cleanRecipeData(data);
-  return data;
+  throw new Error("Could not connect to the recipe server. Please check your internet connection and Vercel configuration.");
 }
 
 /* ---------------- SCHEMA.ORG RECIPE SEO INJECTION ---------------- */

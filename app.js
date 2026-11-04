@@ -719,6 +719,16 @@ function renderDishGrid() {
   });
 }
 
+/* ---------------- ADSENSE ACTIVE CHECK ---------------- */
+function isAdSenseActive() {
+  return Boolean(
+    CONFIG.ADS &&
+    CONFIG.ADS.ENABLED &&
+    CONFIG.ADS.CLIENT_ID &&
+    CONFIG.ADS.CLIENT_ID.trim().startsWith("ca-pub-")
+  );
+}
+
 /* ---------------- DISH PHOTOGRAPHY ---------------- */
 const DISH_IMAGES = {
   "Chicken Biryani": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/%22Hyderabadi_Dum_Biryani%22.jpg/330px-%22Hyderabadi_Dum_Biryani%22.jpg?utm_source=en.wikipedia.org&utm_campaign=api&utm_content=thumbnail",
@@ -1241,8 +1251,8 @@ function renderRecipe() {
           <p class="cal-note">${escapeHtml(ur ? (cal.noteUrdu || cal.note) : (cal.note || cal.noteUrdu))}</p>
         </div>
 
-        <!-- AdSense Sidebar Placement Placeholder -->
-        ${CONFIG.ADS && CONFIG.ADS.ENABLED ? `
+        <!-- AdSense Sidebar Placement (Visible only when AdSense ID is set) -->
+        ${isAdSenseActive() ? `
         <aside class="ad-container ad-sidebar no-print" aria-label="Advertisement">
           <div class="ad-label">Advertisement</div>
           <div class="ad-slot-box" data-ad-slot="SIDEBAR">
@@ -1253,8 +1263,8 @@ function renderRecipe() {
       </div>
     </div>
 
-    <!-- AdSense In-Article Responsive Placement Placeholder -->
-    ${CONFIG.ADS && CONFIG.ADS.ENABLED ? `
+    <!-- AdSense In-Article Responsive Placement (Visible only when AdSense ID is set) -->
+    ${isAdSenseActive() ? `
     <aside class="ad-container ad-banner-recipe no-print" aria-label="Advertisement">
       <div class="ad-label">Advertisement</div>
       <div class="ad-slot-box" data-ad-slot="RECIPE_INLINE">
@@ -1632,6 +1642,12 @@ function init() {
   renderDishGrid();
   applyLang();
   applyTheme();
+
+  // AdSense Top Banner (Only unhide if real Publisher ID is configured)
+  if (isAdSenseActive()) {
+    const topAd = $("#topAdPlaceholder");
+    if (topAd) topAd.classList.remove("hidden");
+  }
 
   // Language & Theme listeners
   $("#langEn").addEventListener("click", () => setLang("en"));
